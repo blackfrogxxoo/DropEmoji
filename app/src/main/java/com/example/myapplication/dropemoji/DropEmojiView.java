@@ -20,11 +20,12 @@ import android.view.animation.AccelerateInterpolator;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback {
     private static final String TAG = "DropEmojiView";
-    private List<Emoji> emojiList = new ArrayList<>();
+    private List<Emoji> emojiList = new CopyOnWriteArrayList<>();
     private SurfaceHolder surfaceHolder;
     private Paint paint;
     private DrawThread drawThread;
@@ -50,13 +51,13 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         if(drawThread != null) {
             drawThread.running = false;
+            drawThread = null;
         }
     }
 
@@ -91,11 +92,9 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
                         synchronized (surfaceHolder) {
                             canvas = surfaceHolder.lockCanvas();
                             canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-                            Iterator<Emoji> iterator = emojiList.iterator();
-                            while (iterator.hasNext()) {
-                                Emoji emoji = iterator.next();
+                            for(Emoji emoji : emojiList) {
                                 if(emoji.isFinished()) {
-                                    iterator.remove();
+                                    emojiList.remove(emoji);
                                 } else {
                                     emoji.onDraw(canvas, paint);
                                 }
@@ -125,7 +124,6 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
      *              X轴：AccelerateInterpolator
      * 带旋转
      *
-     *
      */
     static class Emoji {
         private DropEmojiView parent;
@@ -147,18 +145,18 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
         private void init() {
             matrix = new Matrix();
             final int rotateLeft = Math.random() > 0.5 ? -1 : 1;
-            fromX = (int) (parent.getWidth() / 2 + (0.5 - Math.random()) * parent.getWidth() / 2);
-            fromY = (int) (0 - Math.random() * parent.getHeight() / 2);
+            fromX = (int) (parent.getWidth() / 2 + (0.5 - Math.random()) * parent.getWidth() / 2); // 控件的中间范围
+            fromY = (int) (parent.getTop() - Math.random() * parent.getHeight() / 2); // 随机高度（控件上方0 ~ View高度/2）
             point = new Point(fromX, fromY);
-            toX = rotateLeft < 0 ? 0 - bitmap.getWidth() : parent.getWidth();
+            toX = rotateLeft < 0 ? parent.getLeft() - bitmap.getWidth() : parent.getWidth(); // 控件左右
             toY = parent.getHeight() - bitmap.getHeight();
             xAnimator = ValueAnimator.ofFloat(0f, 1f);
             xAnimator.setInterpolator(new AccelerateInterpolator());
-            final int xDuration = 2500 * (toY - fromY) / parent.getHeight();
+            final int xDuration = 2500 * (toY - fromY) / parent.getHeight(); // 初始位置越高，运动时间越长
             xAnimator.setDuration(xDuration);
             xAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-                int rotateOnceDuration = (int) (1000 + Math.random() * 1000);
-                float speedRate = (float) (Math.random() * 0.5 + 1.0f);
+                int rotateOnceDuration = (int) (1000 + Math.random() * 1000); // 旋转速度随机
+                float speedRate = (float) (Math.random() * 0.5 + 1.2f); // 横向移动速度随机
                 @Override
                 public void onAnimationUpdate(ValueAnimator animation) {
                     point.set(calculateX(animation.getAnimatedFraction(), speedRate), point.y);
@@ -174,7 +172,7 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
                     point.set(point.x, calculateY(animation.getAnimatedFraction()));
                 }
             });
-            yAnimator.setDuration(2000 * (toY - fromY) / parent.getHeight());
+            yAnimator.setDuration(2000 * (toY - fromY) / parent.getHeight()); // 初始位置越高，运动时间越长
             yAnimator.start();
         }
 
@@ -187,13 +185,13 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
         }
 
         public void onDraw(Canvas canvas, Paint paint) {
-            Log.i(TAG, "onDraw: " + point.toString() + ", " + rotateAngle);
             matrix.setRotate(rotateAngle, bitmap.getWidth() / 2, bitmap.getHeight() / 2);
             matrix.postTranslate(point.x, point.y);
             canvas.drawBitmap(bitmap, matrix, paint);
         }
 
         boolean isFinished() {
+            // xAnimator比yAnimator时间长，以xAnimator结束为准
             return xAnimator != null && !xAnimator.isRunning();
         }
 
