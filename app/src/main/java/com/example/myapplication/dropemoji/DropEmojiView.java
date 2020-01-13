@@ -17,6 +17,7 @@ import android.view.MotionEvent;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.animation.AccelerateInterpolator;
+import android.view.animation.BounceInterpolator;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -31,29 +32,29 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
     private static final int DP_PADDING_RIGHT_COMMENT = 10;
     private static final int DP_PADDING_TOP_COMMENT = 6;
     private static final int DP_PADDING_BOTTOM_COMMENT = 6;
-    private static final int DP_PADDING_COMMENT_EMOJI = 2;
+    private static final int DP_PADDING_COMMENT_EMOJI = 0;
     private static final int DP_EMOJI_SIZE = 32;
     private static final int DP_COMMENT_ROUND_CORNER = 10;
     private static final int DURATION_COMMENT_STAY = 2000;
     private static final int DURATION_COMMENT_STAY_FULL_ALPHA = 1700;
-    private List<DropEmoji> dropDropEmojiList = new CopyOnWriteArrayList<>();
+    private static final int FULL_ALPHA = 255;
+    private List<DropEmoji> dropEmojiList = new CopyOnWriteArrayList<>();
     private List<Emoji> normalEmojiList = new ArrayList<>();
     private float density;
     private SurfaceHolder surfaceHolder;
     private Paint paint;
     private Paint commentPaint;
     private DrawThread drawThread;
-    private long lastDropTimestamp;
     private RectF rect = new RectF();
     private int commentBottom;
     private long lastNormalTimestamp;
     private Callback callback;
-    int baseAlpha = 255;
+    private int baseAlpha = FULL_ALPHA;
 
     public DropEmojiView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        setZOrderOnTop(true);
         density = getResources().getDisplayMetrics().density;
-        this.setZOrderOnTop(true);
         surfaceHolder = getHolder();
         surfaceHolder.setFormat(PixelFormat.TRANSLUCENT);
         surfaceHolder.addCallback(this);
@@ -68,7 +69,9 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
         if(drawThread == null) {
             drawThread = new DrawThread();
         }
+        drawThread.running = true;
         drawThread.start();
+        baseAlpha = FULL_ALPHA;
     }
 
     @Override
@@ -84,27 +87,25 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
     }
 
     public void addEmoji(final int bitmapResId) {
-        if(normalEmojiList.size() < MAX_COUNT_COMMENT) {
+        if(normalEmojiList.size() < MAX_COUNT_COMMENT && baseAlpha == FULL_ALPHA) {
             normalEmojiList.add(new Emoji(this, bitmapResId));
             lastNormalTimestamp = System.currentTimeMillis();
         }
-        if(System.currentTimeMillis() - lastDropTimestamp < 500) {
-            return;
+        dropEmojiList.add(new DropEmoji(this, bitmapResId));
+        if(dropEmojiList.size() == 1) { // 第一次掉三个
+            postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    dropEmojiList.add(new DropEmoji(DropEmojiView.this, bitmapResId));
+                }
+            }, 200);
+            postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    dropEmojiList.add(new DropEmoji(DropEmojiView.this, bitmapResId));
+                }
+            }, 400);
         }
-        lastDropTimestamp = System.currentTimeMillis();
-        dropDropEmojiList.add(new DropEmoji(this, bitmapResId));
-        postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                dropDropEmojiList.add(new DropEmoji(DropEmojiView.this, bitmapResId));
-            }
-        }, 200);
-        postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                dropDropEmojiList.add(new DropEmoji(DropEmojiView.this, bitmapResId));
-            }
-        }, 400);
     }
 
     public void setCommentBottom(int bottom) {
@@ -120,33 +121,32 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
         boolean running = true;
         @Override
         public void run() {
-            while (true) {
-                if(running) {
-                    Canvas canvas = null;
-                    try {
-                        synchronized (surfaceHolder) {
-                            canvas = surfaceHolder.lockCanvas();
-                            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-                            if(normalEmojiList.size() > 0) {
-                                drawCommentBar(canvas);
-                            }
-                            // 画掉落的Emoji
-                            for(DropEmoji dropEmoji : dropDropEmojiList) {
-                                if(dropEmoji.isFinished()) {
-                                    dropDropEmojiList.remove(dropEmoji);
-                                } else {
-                                    dropEmoji.onDraw(canvas, paint);
-                                }
-                            }
+            while (running) {
+                Canvas canvas = null;
+                try {
+                    synchronized (surfaceHolder) {
+                        canvas = surfaceHolder.lockCanvas();
+                        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
+                        if(normalEmojiList.size() > 0) {
+                            drawCommentBar(canvas);
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    } finally {
-                        if (canvas != null) {
-                            surfaceHolder.unlockCanvasAndPost(canvas);
+                        // 画掉落的Emoji
+                        for(DropEmoji dropEmoji : dropEmojiList) {
+                            if(dropEmoji.isFinished()) {
+                                dropEmojiList.remove(dropEmoji);
+                            } else {
+                                dropEmoji.onDraw(canvas, paint);
+                            }
                         }
                     }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                } finally {
+                    if(canvas != null) {
+                        surfaceHolder.unlockCanvasAndPost(canvas);
+                    }
                 }
+
 
                 try {
                     TimeUnit.MILLISECONDS.sleep(6);
@@ -170,7 +170,7 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
         int bgAlpha = (int) (baseAlpha * 0.7f);
         commentPaint.setAlpha(bgAlpha);
         rect.left = (int) (10 * density);
-        rect.bottom = commentBottom;
+        rect.bottom = commentBottom - 10 * density;
         int commentWidth = (int) (density * (DP_PADDING_LEFT_COMMENT
                 + DP_PADDING_RIGHT_COMMENT
                 + Math.min(7, normalEmojiList.size())
@@ -193,13 +193,12 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
             emoji.onDraw(canvas, x, y, density * DP_EMOJI_SIZE, commentPaint);
         }
         // 发送消息
-        if(normalEmojiList.size() > 0
-                && callback != null) {
+        if(normalEmojiList.size() > 0 && callback != null) {
             long idleDuration = System.currentTimeMillis() - lastNormalTimestamp;
             if(idleDuration > DURATION_COMMENT_STAY_FULL_ALPHA && idleDuration < DURATION_COMMENT_STAY) {
-                // 准备发送消息，评论框变淡
+                // 准备发送消息，评论框变淡，暂不能再添加
                 baseAlpha = (int) ((1 - 1f * (idleDuration - DURATION_COMMENT_STAY_FULL_ALPHA)
-                        / (DURATION_COMMENT_STAY - DURATION_COMMENT_STAY_FULL_ALPHA)) * 255);
+                        / (DURATION_COMMENT_STAY - DURATION_COMMENT_STAY_FULL_ALPHA)) * FULL_ALPHA);
             } else if(System.currentTimeMillis() - lastNormalTimestamp > DURATION_COMMENT_STAY) {
                 int[] bitmapResIds = new int[normalEmojiList.size()];
                 for (int i = 0; i < bitmapResIds.length; i++) {
@@ -207,7 +206,7 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
                 }
                 callback.onSend(bitmapResIds);
                 normalEmojiList.clear();
-                baseAlpha = 255;
+                baseAlpha = FULL_ALPHA;
             }
         }
     }
@@ -246,6 +245,9 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
      *
      */
     static class DropEmoji {
+        private static final int BASE_X_DURATION = 3000;
+        private static final int BASE_Y_DURATION = 2700;
+        private static final int BASE_ROTATE_DURATION = 1500;
         private DropEmojiView parent;
         private Point point;
         private Bitmap bitmap;
@@ -272,10 +274,10 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
             toY = parent.getHeight() - bitmap.getHeight();
             xAnimator = ValueAnimator.ofFloat(0f, 1f);
             xAnimator.setInterpolator(new AccelerateInterpolator());
-            final int xDuration = 2500 * (toY - fromY) / parent.getHeight(); // 初始位置越高，运动时间越长
+            final int xDuration = BASE_X_DURATION * (toY - fromY) / parent.getHeight(); // 初始位置越高，运动时间越长
             xAnimator.setDuration(xDuration);
             xAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
-                int rotateOnceDuration = (int) (1000 + Math.random() * 1000); // 旋转速度随机
+                int rotateOnceDuration = (int) (BASE_ROTATE_DURATION + Math.random() * BASE_ROTATE_DURATION); // 旋转速度随机
                 float speedRate = (float) (Math.random() * 0.5 + 1.2f); // 横向移动速度随机
                 @Override
                 public void onAnimationUpdate(ValueAnimator animation) {
@@ -285,14 +287,14 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
             });
             xAnimator.start();
             yAnimator = ValueAnimator.ofFloat(0f, 1f);
-            yAnimator.setInterpolator(new DropEmojiBounceInterpolator());
+            yAnimator.setInterpolator(new BounceInterpolator());
             yAnimator.addUpdateListener(new ValueAnimator.AnimatorUpdateListener() {
                 @Override
                 public void onAnimationUpdate(ValueAnimator animation) {
                     point.set(point.x, calculateY(animation.getAnimatedFraction()));
                 }
             });
-            yAnimator.setDuration(2000 * (toY - fromY) / parent.getHeight()); // 初始位置越高，运动时间越长
+            yAnimator.setDuration(BASE_Y_DURATION * (toY - fromY) / parent.getHeight()); // 初始位置越高，运动时间越长
             yAnimator.start();
         }
 
@@ -304,7 +306,7 @@ public class DropEmojiView extends SurfaceView implements SurfaceHolder.Callback
             return (int) (fromY + (toY - fromY) * fraction);
         }
 
-        public void onDraw(Canvas canvas, Paint paint) {
+        void onDraw(Canvas canvas, Paint paint) {
             matrix.setRotate(rotateAngle, bitmap.getWidth() / 2, bitmap.getHeight() / 2);
             matrix.postTranslate(point.x, point.y);
             canvas.drawBitmap(bitmap, matrix, paint);
